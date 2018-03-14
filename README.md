@@ -11,6 +11,6 @@
  
  
  
- After resizing, the input passed to CNN :
+ After pre-processing(removing finger-print region) and resizing, the input passed to CNN :
  
  ![Sample image of 2-butanol](https://github.com/Vineet-Mehta/Chemoinformatics/blob/master/sample_input.png)
