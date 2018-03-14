@@ -7,6 +7,6 @@
  
  Data can be collected from [Spectral Database for Organic Compounds](http://sdbs.db.aist.go.jp/sdbs/cgi-bin/cre_index.cgi)
  
- Sample image from SDBS of  : ![Image of 2-butanol](https://github.com/Vineet-Mehta/Chemoinformatics/C4H10O.gif)
+ Sample image from SDBS of  : ![Image of 2-butanol](https://github.com/Vineet-Mehta/Chemoinformatics/blob/master/C4H10O.gif)
  
- After resizing, the input passed to CNN : ![Sample image of 2-butanol](https://github.com/Vineet-Mehta/Chemoinformatics/sample_input.png)
+ After resizing, the input passed to CNN : ![Sample image of 2-butanol](https://github.com/Vineet-Mehta/Chemoinformatics/blob/master/sample_input.png)
