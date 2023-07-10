@@ -1,0 +1,306 @@
+import numpy as np
+from scipy.sparse import diags
+
+class SABRModel:
+    pass
+
+class ArbitrageFreeSABRModel(SABRModel):
+    pass
+
+class FreeBoundarySABRModel(SABRModel):
+    pass
+
+class SABRMaturity:
+    def __init__(self, α, β, ρ, ν, forward, time, model):
+        self.α = α
+        self.β = β
+        self.ρ = ρ
+        self.ν = ν
+        self.forward = forward
+        self.time = time
+        self.model = model
+
+class TransformedDensity:
+    def __init__(self, maturity, zmin, zmax, h, zm, ϑ, PL, PR):
+        self.maturity = maturity
+        self.zmin = zmin
+        self.zmax = zmax
+        self.h = h
+        self.zm = zm
+        self.ϑ = ϑ
+        self.PL = PL
+        self.PR = PR
+
+def solveStep(ϑ, PL, PR, h, Fm, Cm, Em, dt):
+    frac = dt / (2 * h)
+    M = len(ϑ)
+    B = np.zeros(M)
+    A = np.zeros(M - 1)
+    C = np.zeros(M - 1)
+    B[1:M-1] = 1.0 + frac * (Cm[1:M-2] * Em[1:M-2] * (1.0 / (Fm[2:M-1] - Fm[1:M-2]) + 1.0 / (Fm[1:M-2] - Fm[0:M-3])))
+    C[1:M-1] = -frac * Cm[2:M-1] * Em[2:M-1] / (Fm[2:M-1] - Fm[1:M-2])
+    A[0:M-2] = -frac * Cm[0:M-3] * Em[0:M-3] / (Fm[1:M-2] - Fm[0:M-3])
+    B[0] = Cm[0] / (Fm[1] - Fm[0]) * Em[0]
+    C[0] = Cm[1] / (Fm[1] - Fm[0]) * Em[1]
+    B[M-1] = Cm[M-1] / (Fm[M-1] - Fm[M-2]) * Em[M-1]
+    A[M-2] = Cm[M-2] / (Fm[M-1] - Fm[M-2]) * Em[M-2]
+    tri = diags([A, B, C], [-1, 0, 1], (M, M))
+    p1 = ϑ[0]
+    pm = ϑ[M-1]
+    ϑ[0] = 0
+    ϑ[M-1] = 0
+    ϑ0 = np.linalg.solve(tri.toarray(), ϑ)
+    PL0 = PL + dt * Cm[1] / (Fm[1] - Fm[0]) * Em[1] * ϑ0[1]
+    PR0 = PR + dt * Cm[M-2] / (Fm[M-1] - Fm[M-2]) * Em[M-2] * ϑ0[M-2]
+    ϑ[0] = p1
+    ϑ[M-1] = pm
+    return ϑ0, PL0, PR0
+
+def computeBoundaries(m, nd):
+    zmin = -nd * np.sqrt(m.time)
+    zmax = -zmin
+    if m.β < 1:
+        ybar = -m.forward**(1 - m.β) / (1 - m.β)
+        zbar = -1 / m.ν * np.log((np.sqrt(1 - m.ρ**2 + (m.ρ + m.ν * ybar / m.α)**2) - m.ρ - m.ν * ybar / m.α) / (1 - m.ρ))
+        if zbar > zmin:
+            zmin = zbar
+    return zmin, zmax
+
+def yofz(m, zm):
+    return m.α / m.ν * (np.sinh(m.ν * zm) + m.ρ * (np.cosh(m.ν * zm) - 1))
+
+def fofy(m, ym):
+    expr = m.forward**(1 - m.β) + (1 - m.β) * ym
+    return np.maximum(expr, 0)**(1 / (1 - m.β))
+
+def cofy(m, ym, Fm):
+    return np.sqrt(m.α**2 + 2 * m.ρ * m.α * m.ν * ym + m.ν**2 * ym**2) * Fm**(m.β)
+
+def gammaOfF(m, Fm, j0):
+    Gamma = (Fm**m.β - m.forward**m.β) / (Fm - m.forward)
+    Gamma[j0+1] = m.β / m.forward**(1 - m.β)
+    return Gamma
+
+def yOfStrike(m, strike):
+    return (strike**(1 - m.β) - m.forward**(1 - m.β)) / (1 - m.β)
+
+def makeForward(m, z):
+    y = yofz(m, z)
+    return fofy(m, y)
+
+def makeTransformedDensityLawsonSwayne(maturity, N, timesteps, nd):
+    α = maturity.α
+    β = maturity.β
+    ν = maturity.ν
+    ρ = maturity.ρ
+    forward = maturity.forward
+    T = maturity.time
+    zmin, zmax = computeBoundaries(maturity, nd)
+    J = N - 2
+    h0 = (zmax - zmin) / J
+    j0 = math.ceil((0 - zmin) / h0)
+    h = (0 - zmin) / (j0 - 0.5)
+    z = np.arange(0, J+2) * h + zmin
+    zmax = z[J+1]
+    zm = z - 0.5 * h
+    ym = yofz(maturity, zm)
+    ym[0] = ym[1]  # avoid negative
+    Fm = fofy(maturity, ym)
+    Cm = cofy(maturity, ym, Fm)
+    Gammam = gammaOfF(maturity, Fm, int(j0))
+    ymax = yofz(maturity, zmax)
+    ymin = yofz(maturity, zmin)
+    Fmax = fofy(maturity, ymax)
+    Fmin = fofy(maturity, ymin)
+    Fm[0] = 2 * Fmin - Fm[1]
+    Fm[J+1] = 2 * Fmax - Fm[J]
+    Cm[0] = Cm[1]
+    Cm[J+1] = Cm[J]
+    dt = T / timesteps
+    b = 1 - math.sqrt(2) / 2  # Lawson Swayne param
+    dt1 = dt * b
+    dt2 = dt * (1 - 2 * b)
+    Em = np.ones(J + 2)
+    Emdt1 = np.exp(ρ * ν * α * Gammam * dt1)
+    Emdt1[0] = Emdt1[1]
+    Emdt1[J+1] = Emdt1[J]
+    Emdt2 = np.exp(ρ * ν * α * Gammam * dt2)
+    Emdt2[0] = Emdt2[1]
+    Emdt2[J+1] = Emdt2[J]
+    PL = 0.0
+    PR = 0.0
+    ϑ = np.zeros(J + 2)
+    ϑ[j0] = 1.0 / h
+    for t in range(timesteps):
+        Em *= Emdt1
+        ϑ1, PL1, PR1 = solveStep(ϑ, PL, PR, h, Fm, Cm, Em, dt1)
+        Em *= Emdt1
+        ϑ2, PL2, PR2 = solveStep(ϑ1, PL1, PR1, h, Fm, Cm, Em, dt1)
+        ϑ = (math.sqrt(2) + 1) * ϑ2 - math.sqrt(2) * ϑ1
+        PL = (math.sqrt(2) + 1) * PL2 - math.sqrt(2) * PL1
+        PR = (math.sqrt(2) + 1) * PR2 - math.sqrt(2) * PR1
+        Em *= Emdt2
+    density = TransformedDensity(maturity, zmin, zmax, h, zm, ϑ, PL, PR)
+    return density
+
+import numpy as np
+from scipy.sparse import diags
+
+def computeLinearValues(density):
+    n = len(density.ϑ)
+    Fm = makeForward(density.maturity, density.zm)
+    Fm[0] = -Fm[1]
+    F = makeForward(density.maturity, density.zm + 0.5 * density.h)
+    s = np.zeros(n)
+    d = np.zeros(n)
+    dl = np.zeros(n - 1)
+    du = np.zeros(n - 1)
+    rhs = np.zeros(n)
+    firstrow = np.zeros(n)
+    lastrow = np.zeros(n)
+    for i in range(1, n-1):
+        d[i] = F[i] - F[i-1] - 0.5 * (F[i] - Fm[i])**2 / (Fm[i+1] - Fm[i]) + 0.5 * (F[i-1] - Fm[i])**2 / (Fm[i-1] - Fm[i])
+        du[i] = 0.5 * (F[i] - Fm[i])**2 / (Fm[i+1] - Fm[i])
+        dl[i-1] = -0.5 * (F[i-1] - Fm[i])**2 / (Fm[i-1] - Fm[i])
+        rhs[i] = density.ϑ[i] * density.h
+        lastrow[i] += 0.5 * (F[i] - Fm[i])**2 - 0.5 * (F[i-1] - Fm[i])**2 - (F[i] - Fm[i])**3 / (Fm[i+1] - Fm[i]) / 3.0 + (F[i-1] - Fm[i])**3 / (Fm[i-1] - Fm[i]) / 3.0
+        lastrow[i-1] += -(F[i-1] - Fm[i])**3 / (Fm[i-1] - Fm[i]) / 3.0
+        lastrow[i+1] += (F[i] - Fm[i])**3 / (Fm[i+1] - Fm[i]) / 3.0
+    
+    rhs[n-1] = 0
+    firstrow[0] = Fm[1]
+    firstrow[1] = -Fm[0]
+    rhs[0] = 0
+    
+    tri = diags([dl, d, du], [-1, 0, 1])
+    stri = tri.toarray()
+    stri[0, :] = firstrow
+    stri[n-1, :] = lastrow
+    
+    coeff = np.linalg.solve(stri, rhs)
+    return coeff
+
+def priceTransformedDensity(density, isCall, strike, smoothing, smoothingParameters=None):
+    maturity = density.maturity
+    α = maturity.α
+    β = maturity.β
+    ν = maturity.ν
+    ρ = maturity.ρ
+    forward = maturity.forward
+    ystrike = yOfStrike(maturity, strike)
+    zstrike = -1 / ν * np.log(((np.sqrt(1 - ρ**2 + (ρ + ν * ystrike / α)**2) - ρ - ν * ystrike / α) / (1 - ρ)))
+    
+    if zstrike <= density.zmin:
+        p = forward - strike
+    elif zstrike >= density.zmax:
+        p = 0
+    else:
+        Fmax = makeForward(maturity, density.zmax)
+        p = (Fmax - strike) * density.PR
+        k0 = int(np.ceil((zstrike - density.zmin - np.finfo(float).eps*1000) / density.h))
+        ztilde = density.zmin + k0 * density.h
+        ftilde = makeForward(maturity, ztilde)
+        term = ftilde - strike
+        
+        if smoothing == linearc0:
+            Fm = makeForward(maturity, density.zm[k0:])
+            
+            if k0 == 0:
+                Fm[0] = -Fm[1]
+            
+            F = makeForward(maturity, density.zm[k0:] + 0.5 * density.h)
+            coeff = np.array(smoothingParameters, dtype=np.float64)[k0:]
+            p += np.sum((Fm[2:-1] - strike) * density.h * density.ϑ[k0+1:-1])
+            
+            for i in range(2, len(Fm)-1):
+                p += (0.5 * (F[i] - Fm[i])**2 - 0.5 * (F[i-1] - Fm[i])**2) * coeff[i] + \
+                     (coeff[i+1] - coeff[i]) * (F[i] - Fm[i])**3 / (Fm[i+1] - Fm[i]) / 3.0 + \
+                     (coeff[i] - coeff[i-1]) * (F[i-1] - Fm[i])**3 / (Fm[i-1] - Fm[i]) / 3.0
+            
+            if strike < Fm[1]:
+                p += (F[1] - Fm[1])**3 * (coeff[2] - coeff[1]) / (Fm[2] - Fm[1]) / 3.0 + \
+                     0.5 * (F[1] - Fm[1])**2 * coeff[1] + Fm[1] * (0.5 * (F[1] - Fm[1])**2 * \
+                     (coeff[2] - coeff[1]) / (Fm[2] - Fm[1]) + coeff[1] * (F[1] - Fm[1]))
+                
+                p -= strike * ((F[1]**2 - Fm[1]**2) * (coeff[2] - coeff[1]) / (Fm[2] - Fm[1]) / 2.0 + \
+                              (F[1] - Fm[1]) * (coeff[1] - Fm[1] * (coeff[2] - coeff[1]) / (Fm[2] - Fm[1])))
+                
+                p -= (strike - Fm[1])**3 * (coeff[0] - coeff[1]) / (Fm[0] - Fm[1]) / 3.0 + \
+                     0.5 * (strike - Fm[1])**2 * coeff[1] + Fm[1] * (0.5 * (strike - Fm[1])**2 * \
+                     (coeff[0] - coeff[1]) / (Fm[0] - Fm[1]) + coeff[1] * (strike - Fm[1]))
+                
+                p -= strike * ((Fm[1]**2 - strike**2) * (coeff[1] - coeff[0]) / (Fm[1] - Fm[0]) / 2.0 + \
+                              (Fm[1] - strike) * (coeff[0] - Fm[1] * (coeff[1] - coeff[0]) / (Fm[1] - Fm[0])))
+            else:
+                p += (F[1]**3 - strike**3) * (coeff[2] - coeff[1]) / (Fm[2] - Fm[1]) / 3.0 + \
+                     0.5 * (F[1]**2 - strike**2) * (coeff[1] - Fm[1] * (coeff[2] - coeff[1]) / (Fm[2] - Fm[1]))
+                
+                p -= strike * ((F[1]**2 - strike**2) * (coeff[2] - coeff[1]) / (Fm[2] - Fm[1]) / 2.0 + \
+                              (F[1] - strike) * (coeff[1] - Fm[1] * (coeff[2] - coeff[1]) / (Fm[2] - Fm[1])))
+        else:
+            Fm = makeForward(maturity, density.zm[k0+1:])
+            
+            if term > 0 and (smoothing == linear or smoothing == midpoint):
+                dFdz = 0.0
+                ϑ0 = density.ϑ[k0]
+                
+                if smoothing == linear:
+                    ftildem = makeForward(maturity, ztilde - density.h)
+                    bk = (2 * Fm[0] - ftildem - ftilde) / (ftilde - ftildem)
+                    dFdz = (ftilde - ftildem) / density.h / (1 + bk * (ftilde + 2 * strike - 3 * ftilde) / (ftilde - ftildem))
+                elif smoothing == midpoint:
+                    ftildem = makeForward(maturity, ztilde - density.h)
+                    dFdz = 2 * (ftilde - Fm[0]) / density.h
+                
+                p += 0.5 * term**2 * ϑ0 / dFdz
+            
+            p += np.sum((Fm[1:-1] - strike) * density.h * density.ϑ[k0+1:-1])
+    
+    if not isCall:
+        p = p - (forward - strike)
+    
+    return p
+
+def cumulativeDensity(density, isCall, strike, smoothing):
+    maturity = density.maturity
+    α = maturity.α
+    β = maturity.β
+    ν = maturity.ν
+    ρ = maturity.ρ
+    forward = maturity.forward
+    ystrike = yOfStrike(maturity, strike)
+    zstrike = -1 / ν * np.log(((np.sqrt(1 - ρ**2 + (ρ + ν * ystrike / α)**2) - ρ - ν * ystrike / α) / (1 - ρ)))
+    
+    if zstrike <= density.zmin:
+        p = -1.0
+    elif zstrike >= density.zmax:
+        p = 0.0
+    else:
+        Fmax = makeForward(maturity, density.zmax)
+        p = -density.PR
+        k0 = int(np.ceil((zstrike - density.zmin - np.finfo(float).eps*1000) / density.h))
+        ztilde = density.zmin + k0 * density.h
+        ftilde = makeForward(maturity, ztilde)
+        term = ftilde - strike
+        Fm = makeForward(maturity, density.zm[k0+1:])
+        
+        if smoothing != none and term > 0:
+            dFdz = 0.0
+            ϑ0 = density.ϑ[k0]
+            
+            if smoothing == linear:
+                ftildem = makeForward(maturity, ztilde - density.h)
+                bk = (2 * Fm[0] - ftildem - ftilde) / (ftilde - ftildem)
+                dFdz = (ftilde - ftildem) / density.h / (1 + bk * (ftilde + 2 * strike - 3 * ftildem) / (ftilde - ftildem))
+            elif smoothing == midpoint:
+                ftildem = makeForward(maturity, ztilde - density.h)
+                dFdz = 2 * (ftilde - Fm[0]) / density.h
+                
+            p += -term * ϑ0 / dFdz
+        
+        p += -density.h * np.sum(density.ϑ[k0+1:-1])
+    
+    if not isCall:
+        p = p + 1
+    
+    return p
