@@ -1,5 +1,8 @@
 import numpy as np
 from scipy.sparse import diags
+from scipy.linalg import lapack as la
+
+import math 
 
 class SABRModel:
     pass
@@ -37,9 +40,9 @@ def solveStep(ϑ, PL, PR, h, Fm, Cm, Em, dt):
     B = np.zeros(M)
     A = np.zeros(M - 1)
     C = np.zeros(M - 1)
-    B[1:M-1] = 1.0 + frac * (Cm[1:M-2] * Em[1:M-2] * (1.0 / (Fm[2:M-1] - Fm[1:M-2]) + 1.0 / (Fm[1:M-2] - Fm[0:M-3])))
-    C[1:M-1] = -frac * Cm[2:M-1] * Em[2:M-1] / (Fm[2:M-1] - Fm[1:M-2])
-    A[0:M-2] = -frac * Cm[0:M-3] * Em[0:M-3] / (Fm[1:M-2] - Fm[0:M-3])
+    B[1:M-2] = 1.0 + frac * (Cm[1:M-2] * Em[1:M-2] * (1.0 / (Fm[2:M-1] - Fm[1:M-2]) + 1.0 / (Fm[1:M-2] - Fm[0:M-3])))
+    C[1:M-2] = -frac * Cm[2:M-1] * Em[2:M-1] / (Fm[2:M-1] - Fm[1:M-2])
+    A[0:M-3] = -frac * Cm[0:M-3] * Em[0:M-3] / (Fm[1:M-2] - Fm[0:M-3])
     B[0] = Cm[0] / (Fm[1] - Fm[0]) * Em[0]
     C[0] = Cm[1] / (Fm[1] - Fm[0]) * Em[1]
     B[M-1] = Cm[M-1] / (Fm[M-1] - Fm[M-2]) * Em[M-1]
@@ -49,7 +52,8 @@ def solveStep(ϑ, PL, PR, h, Fm, Cm, Em, dt):
     pm = ϑ[M-1]
     ϑ[0] = 0
     ϑ[M-1] = 0
-    ϑ0 = np.linalg.solve(tri.toarray(), ϑ)
+    k = la.dgtsv(A, B, C,ϑ )
+    ϑ0 = k[3]
     PL0 = PL + dt * Cm[1] / (Fm[1] - Fm[0]) * Em[1] * ϑ0[1]
     PR0 = PR + dt * Cm[M-2] / (Fm[M-1] - Fm[M-2]) * Em[M-2] * ϑ0[M-2]
     ϑ[0] = p1
@@ -78,7 +82,7 @@ def cofy(m, ym, Fm):
 
 def gammaOfF(m, Fm, j0):
     Gamma = (Fm**m.β - m.forward**m.β) / (Fm - m.forward)
-    Gamma[j0+1] = m.β / m.forward**(1 - m.β)
+    Gamma[j0] = m.β / m.forward**(1 - m.β)
     return Gamma
 
 def yOfStrike(m, strike):
