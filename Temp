@@ -1,0 +1,56 @@
+import numpy as np
+
+def makeTransformedDensityLawsonSwayne(maturity, N, timesteps, nd):
+    α = maturity.α
+    β = maturity.β
+    ν = maturity.ν
+    ρ = maturity.ρ
+    forward = maturity.forward
+    T = maturity.time
+    zmin, zmax = computeBoundaries(maturity, nd)
+    J = N - 2
+    h0 = (zmax - zmin) / J
+    j0 = np.ceil((0 - zmin) / h0)
+    h = (0 - zmin) / (j0 - 0.5)
+    z = np.arange(0, J + 2) * h + zmin
+    zmax = z[J+1]
+    zm = z - 0.5 * h
+    ym = yofz(maturity, zm)
+    ym[0] = ym[1]
+    Fm = fofy(maturity, ym)
+    Cm = cofy(maturity, ym, Fm)
+    Gammam = gammaOfF(maturity, Fm, int(j0))
+    ymax = yofz(maturity, zmax)
+    ymin = yofz(maturity, zmin)
+    Fmax = fofy(maturity, ymax)
+    Fmin = fofy(maturity, ymin)
+    Fm[0] = 2 * Fmin - Fm[1]
+    Fm[J+1] = 2 * Fmax - Fm[J]
+    Cm[0] = Cm[1]
+    Cm[J+1] = Cm[J]
+    dt = T / timesteps
+    b = 1 - np.sqrt(2) / 2
+    dt1 = dt * b
+    dt2 = dt * (1 - 2 * b)
+    Em = np.ones(J + 2)
+    Emdt1 = np.exp(ρ * ν * α * Gammam * dt1)
+    Emdt1[0] = Emdt1[1]
+    Emdt1[J+1] = Emdt1[J]
+    Emdt2 = np.exp(ρ * ν * α * Gammam * dt2)
+    Emdt2[0] = Emdt2[1]
+    Emdt2[J+1] = Emdt2[J]
+    PL = 0.0
+    PR = 0.0
+    ϑ = np.zeros(J + 2)
+    ϑ[int(j0)] = 1.0 / h
+    for t in range(1, timesteps+1):
+        Em *= Emdt1
+        ϑ1, PL1, PR1 = solveStep(ϑ, PL, PR, h, Fm, Cm, Em, dt1)
+        Em *= Emdt1
+        ϑ2, PL2, PR2 = solveStep(ϑ1, PL1, PR1, h, Fm, Cm, Em, dt1)
+        ϑ = (np.sqrt(2) + 1) * ϑ2 - np.sqrt(2) * ϑ1
+        PL = (np.sqrt(2) + 1) * PL2 - np.sqrt(2) * PL1
+        PR = (np.sqrt(2) + 1) * PR2 - np.sqrt(2) * PR1
+        Em *= Emdt2
+    density = TransformedDensity(maturity, zmin, zmax, h, zm, ϑ, PL, PR)
+    return density
