@@ -2,24 +2,22 @@ import tensorflow as tf
 
 def thomas_algorithm(a, b, c, d):
     n = len(d)
-
     w = tf.zeros(n-1, dtype=tf.float64)
     g = tf.zeros(n, dtype=tf.float64)
     p = tf.zeros(n, dtype=tf.float64)
 
-    w = c[0] / b[0]
-    g = d[0] / b[0]
+    w = tf.tensor_scatter_nd_update(w, [[0]], [c[0]/b[0]])
+    g = tf.tensor_scatter_nd_update(g, [[0]], [d[0]/b[0]])
 
     for i in range(1, n-1):
-        w_next = c[i] / (b[i] - a[i-1] * w[i-1])
-        g_next = (d[i] - a[i-1] * g[i-1]) / (b[i] - a[i-1] * w[i-1])
-        w = tf.concat([w, [w_next]], axis=0)
-        g = tf.concat([g, [g_next]], axis=0)
+        w = tf.tensor_scatter_nd_update(w, [[i]], [c[i]/(b[i] - a[i-1]*w[i-1])])
 
-    p = tf.concat([p, [g[-1]]], axis=0)
+    for i in range(1, n):
+        g = tf.tensor_scatter_nd_update(g, [[i]], [(d[i] - a[i-1]*g[i-1])/(b[i] - a[i-1]*w[i-1])])
 
-    for i in range(n-2, -1, -1):
-        p_next = g[i] - w[i] * p[-1]
-        p = tf.concat([p_next[tf.newaxis], p], axis=0)
+    p = tf.tensor_scatter_nd_update(p, [[n-1]], [g[n-1]])
+
+    for i in range(n-1, 0, -1):
+        p = tf.tensor_scatter_nd_update(p, [[i-1]], [g[i-1] - w[i-1]*p[i]])
 
     return p
